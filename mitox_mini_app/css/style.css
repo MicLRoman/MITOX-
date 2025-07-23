@@ -1,0 +1,29 @@
+/* style.css */
+
+body {
+    background-color: var(--tg-theme-bg-color, #f3f4f6);
+    color: var(--tg-theme-text-color, #1f2937);
+}
+
+button {
+    background-color: var(--tg-theme-button-color, #3b82f6);
+    color: var(--tg-theme-button-text-color, #ffffff);
+}
+
+/* Стили для модального окна */
+#modal {
+    display: none; /* По умолчанию скрыто */
+    align-items: center;
+    justify-content: center;
+}
+
+/* Класс для показа модального окна */
+#modal.flex {
+    display: flex;
+}
+
+/* Стили для кнопки "Отмена" */
+#cancel-btn {
+    background-color: #e5e7eb; /* Светло-серый */
+    color: #1f2937; /* Темный текст */
+}
