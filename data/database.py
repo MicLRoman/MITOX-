@@ -1,144 +1,169 @@
-# data/database.py
 import sqlite3
-import os
 import json
-import threading
+import os
 
-# --- Настройки ---
+# --- PATH SETUP ---
+# Определяем абсолютный путь к файлу базы данных, чтобы он работал независимо от того, откуда запускается скрипт
+# __file__ -> database.py
+# os.path.dirname(__file__) -> /path/to/project/data
+# os.path.join(...) -> /path/to/project/data/mitox_bot.db
+DB_PATH = os.path.join(os.path.dirname(__file__), 'mitox_bot.db')
 
-# Этот код находит абсолютный путь к папке, где лежит этот файл.
-# Это делает его независимым от того, откуда запускается бот или Flask.
-DB_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = os.path.join(DB_DIR, 'mitox_app.db')
+def _execute_query(query, params=(), fetchone=False, fetchall=False, commit=False):
+    """Универсальная функция для выполнения SQL-запросов."""
+    # WAL (Write-Ahead Logging) значительно улучшает производительность при одновременных операциях чтения и записи.
+    # timeout предотвращает ошибки "database is locked" при высокой нагрузке.
+    with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        conn.execute('PRAGMA journal_mode=WAL;')
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        
+        if commit:
+            conn.commit()
+        
+        if fetchone:
+            return cursor.fetchone()
+        
+        if fetchall:
+            return cursor.fetchall()
 
-# Создаем локальный для потока объект, чтобы у каждого потока (запроса)
-# было свое собственное соединение с БД. Это стандартная практика для Flask.
-local_storage = threading.local()
+def _check_and_add_columns():
+    """Проверяет и добавляет недостающие колонки в таблицы."""
+    tables = {
+        'users': ['telegram_id', 'username', 'first_name', 'created_at'],
+        'complexes': ['id', 'user_id', 'name', 'supplements', 'created_at', 'reminder_enabled', 'reminder_time']
+    }
+    
+    for table_name, expected_columns in tables.items():
+        rows = _execute_query(f"PRAGMA table_info({table_name});", fetchall=True)
+        existing_columns = [row[1] for row in rows]
+        
+        for column in expected_columns:
+            if column not in existing_columns:
+                print(f"Обнаружена отсутствующая колонка '{column}' в таблице '{table_name}'. Добавляю...")
+                if column == 'reminder_enabled':
+                    _execute_query(f'ALTER TABLE {table_name} ADD COLUMN {column} INTEGER DEFAULT 0;', commit=True)
+                elif column == 'reminder_time':
+                    _execute_query(f'ALTER TABLE {table_name} ADD COLUMN {column} TEXT;', commit=True)
+                else: # для других колонок, если понадобятся в будущем
+                     _execute_query(f'ALTER TABLE {table_name} ADD COLUMN {column};', commit=True)
+                print(f"Колонка '{column}' успешно добавлена.")
 
-def get_db_connection():
-    """Открывает новое соединение с БД, если его еще нет для текущего потока."""
-    db = getattr(local_storage, '_database', None)
-    if db is None:
-        db = local_storage._database = sqlite3.connect(DB_NAME, timeout=10)
-        # Включаем режим WAL для лучшей параллельной работы
-        db.execute('PRAGMA journal_mode=WAL;')
-    return db
-
-def close_db_connection(exception=None):
-    """Закрывает соединение с БД в конце запроса."""
-    db = getattr(local_storage, '_database', None)
-    if db is not None:
-        db.close()
-        local_storage._database = None
-
-# --- Инициализация ---
 
 def init_db():
-    """
-    Инициализирует базу данных: создает папку, файл и таблицы, если их нет.
-    """
-    os.makedirs(DB_DIR, exist_ok=True)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Таблица пользователей
-    cursor.execute("""
+    """Инициализирует базу данных и создает таблицы, если их нет."""
+    _execute_query('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             telegram_id INTEGER UNIQUE NOT NULL,
             username TEXT,
             first_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Таблица комплексов со связью (FOREIGN KEY)
-    cursor.execute("""
+        );
+    ''', commit=True)
+    
+    _execute_query('''
         CREATE TABLE IF NOT EXISTS complexes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             supplements TEXT NOT NULL, -- Храним как JSON-строку
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-        )
-    """)
-    conn.commit()
-    print("Database initialized successfully with WAL mode enabled.")
-    close_db_connection()
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+    ''', commit=True)
+    print("База данных инициализирована.")
+    _check_and_add_columns()
 
 
-# --- Функции для работы с пользователями ---
-
-def ensure_user(telegram_id, username='', first_name=''):
+def ensure_user(telegram_id, username=None, first_name=None):
     """
-    Проверяет, существует ли пользователь. Если нет - создает.
-    Возвращает внутренний id пользователя.
+    Гарантирует, что пользователь существует в БД.
+    Если пользователь существует - обновляет его username и first_name.
+    Если не существует - создает нового.
+    Возвращает данные пользователя.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
-    user = cursor.fetchone()
-    
+    user = _execute_query("SELECT * FROM users WHERE telegram_id = ?;", (telegram_id,), fetchone=True)
     if user:
-        close_db_connection()
-        return user[0]
-    else:
-        cursor.execute(
-            "INSERT INTO users (telegram_id, username, first_name) VALUES (?, ?, ?)",
-            (telegram_id, username, first_name)
+        # Пользователь найден, обновляем данные, если они изменились
+        _execute_query(
+            "UPDATE users SET username = ?, first_name = ? WHERE telegram_id = ?;",
+            (username, first_name, telegram_id),
+            commit=True
         )
-        conn.commit()
-        user_id = cursor.lastrowid
-        print(f"Created new user with Telegram ID: {telegram_id}")
-        close_db_connection()
-        return user_id
-
-# --- Функции для работы с комплексами ---
+    else:
+        # Пользователь не найден, создаем нового
+        _execute_query(
+            "INSERT INTO users (telegram_id, username, first_name) VALUES (?, ?, ?);",
+            (telegram_id, username, first_name),
+            commit=True
+        )
+    # Возвращаем актуальные данные
+    user_data = _execute_query("SELECT id, username, first_name FROM users WHERE telegram_id = ?;", (telegram_id,), fetchone=True)
+    return {'id': user_data[0], 'username': user_data[1], 'first_name': user_data[2]}
 
 def add_complex(telegram_id, complex_data):
-    """Сохраняет новый комплекс для пользователя."""
-    user_id = ensure_user(telegram_id)
-    supplements_json = json.dumps(complex_data.get('supplements', []), ensure_ascii=False)
+    """Добавляет новый комплекс для пользователя."""
+    user = ensure_user(telegram_id) # Гарантируем, что пользователь существует
+    user_id = user['id']
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO complexes (user_id, name, supplements) VALUES (?, ?, ?)",
-        (user_id, complex_data['name'], supplements_json)
+    supplements_json = json.dumps(complex_data.get('supplements', []), ensure_ascii=False)
+    reminder_enabled = complex_data.get('reminder_enabled', 0)
+    reminder_time = complex_data.get('reminder_time', None)
+
+    _execute_query(
+        "INSERT INTO complexes (user_id, name, supplements, reminder_enabled, reminder_time) VALUES (?, ?, ?, ?, ?);",
+        (user_id, complex_data['name'], supplements_json, reminder_enabled, reminder_time),
+        commit=True
     )
-    conn.commit()
-    close_db_connection()
-    print(f"Saved complex '{complex_data['name']}' for user with Telegram ID {telegram_id}")
+
+def update_complex(complex_id, complex_data):
+    """Обновляет существующий комплекс."""
+    supplements_json = json.dumps(complex_data.get('supplements', []), ensure_ascii=False)
+    reminder_enabled = complex_data.get('reminder_enabled', 0)
+    reminder_time = complex_data.get('reminder_time', None)
+
+    _execute_query(
+        "UPDATE complexes SET name = ?, supplements = ?, reminder_enabled = ?, reminder_time = ? WHERE id = ?;",
+        (complex_data['name'], supplements_json, reminder_enabled, reminder_time, complex_id),
+        commit=True
+    )
+
+def delete_complex(complex_id):
+    """Удаляет комплекс по его ID."""
+    _execute_query("DELETE FROM complexes WHERE id = ?;", (complex_id,), commit=True)
+
 
 def get_user_complexes(telegram_id):
-    """Получает все комплексы конкретного пользователя."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Сначала найдем внутренний ID пользователя
-    cursor.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
-    user = cursor.fetchone()
-    
+    """Возвращает все комплексы конкретного пользователя."""
+    user = ensure_user(telegram_id)
     if not user:
-        close_db_connection()
-        return [] # Пользователя нет в базе, значит и комплексов нет
+        return []
     
-    user_id = user[0]
-    cursor.execute(
-        "SELECT id, name, supplements FROM complexes WHERE user_id = ? ORDER BY id DESC", 
-        (user_id,)
-    )
-    complexes_raw = cursor.fetchall()
-    close_db_connection()
-
-    # Преобразуем данные в удобный формат
-    complexes_list = []
-    for row in complexes_raw:
-        complexes_list.append({
-            "id": row[0],
-            "name": row[1],
-            "supplements": json.loads(row[2])
+    user_id = user['id']
+    rows = _execute_query("SELECT id, name, supplements, reminder_enabled, reminder_time FROM complexes WHERE user_id = ? ORDER BY created_at DESC;", (user_id,), fetchall=True)
+    
+    complexes = []
+    for row in rows:
+        complexes.append({
+            'id': row[0],
+            'name': row[1],
+            'supplements': json.loads(row[2]),
+            'reminder_enabled': bool(row[3]),
+            'reminder_time': row[4]
         })
-    return complexes_list
+    return complexes
+
+def get_active_reminders():
+    """
+    Возвращает все активные напоминания из базы данных.
+    Возвращает список кортежей: (telegram_id, complex_name, reminder_time)
+    """
+    query = """
+        SELECT u.telegram_id, c.name, c.reminder_time
+        FROM complexes c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.reminder_enabled = 1 AND c.reminder_time IS NOT NULL;
+    """
+    return _execute_query(query, fetchall=True)
+

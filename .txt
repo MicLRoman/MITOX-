@@ -1,7 +1,7 @@
 
 python -m http.server 8000
 ssh -R 80:localhost:8000 nokey@localhost.run
-ngrok http 8000
+ngrok http 5000
 
 
 C:\Users\Michael\AppData\Local\Programs\Python\Python313\python.exe

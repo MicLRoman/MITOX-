@@ -1,6 +1,6 @@
 BOT_TOKEN = "7618299417:AAGOApuHPiWjlJ_KrcWdbDoqzUcVZiGVNs8" 
 
-FLASK_APP_URL = "https://fbeb0a369b14.ngrok-free.app" 
+FLASK_APP_URL = "https://b2ee38a4235f.ngrok-free.app" 
 JWT_SECRET_KEY = "your-super-secret-and-long-string-for-jwt"
 
 CHANNEL_URL = "https://t.me/mitox_info"

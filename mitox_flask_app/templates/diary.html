@@ -5,38 +5,63 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Дневник приема БАД</title>
     <style>
-        /* Простые стили для наглядности */
+        /* Стили остались те же, но добавлены для полей напоминаний */
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #1c1e21; }
         .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; }
-        .complex-card { background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
-        .complex-card h3 { margin-top: 0; }
-        form { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-        input[type="text"], button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
-        button { background-color: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
-        button:hover { background-color: #0056b3; }
+        h1, h2, h3 { color: #333; }
+        button { cursor: pointer; }
+        .complex-card { position: relative; background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
+        .menu-btn { position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 24px; cursor: pointer; line-height: 1; padding: 5px; color: #606770; }
+        .dropdown-menu { display: none; position: absolute; top: 35px; right: 10px; background-color: white; border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 100; list-style: none; padding: 5px 0; margin: 0; min-width: 120px;}
+        .dropdown-menu li button, .dropdown-menu li form { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 15px; font-size: 14px; }
+        .dropdown-menu li button:hover, .dropdown-menu li form button:hover { background-color: #f0f0f0; }
+        .dropdown-menu form { padding: 0; margin: 0; }
+        .dropdown-menu form button { color: #d93025; }
+        .form-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
+        input[type="text"], input[type="time"], .form-section button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; font-size: 16px; }
         .supplement-field { display: flex; gap: 10px; align-items: center; margin-bottom: 5px; }
-        .supplement-field input { flex-grow: 1; }
-        .remove-btn { background-color: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+        .remove-btn { background-color: #f8f9fa; color: #dc3545; border: 1px solid #dc3545; width: 38px !important; height: 38px; cursor: pointer; border-radius: 50%; font-weight: bold; font-size: 20px; line-height: 1; padding: 0; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 600px; border-radius: 8px; }
+        .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .reminder-group { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .reminder-group input[type="checkbox"] { width: auto; }
+        .reminder-group input[type="time"] { display: none; } /* Скрыто по умолчанию */
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Дневник приема БАД</h1>
-        <!-- Используем данные из сессии для приветствия -->
         <h2>Здравствуйте, {{ user_session.first_name or 'Пользователь' }}!</h2>
         
         <div id="complex-list">
             <h2>Ваши комплексы</h2>
             {% if complexes %}
                 {% for complex in complexes %}
-                    <div class="complex-card">
+                    <div class="complex-card" 
+                         id="complex-{{ complex.id }}" 
+                         data-complex-name="{{ complex.name }}" 
+                         data-supplements='{{ complex.supplements | tojson | safe }}'
+                         data-reminder-enabled="{{ 'true' if complex.reminder_enabled else 'false' }}"
+                         data-reminder-time="{{ complex.reminder_time or '' }}">
+                        <button class="menu-btn" onclick="toggleMenu(event, {{ complex.id }})">...</button>
+                         <ul class="dropdown-menu" id="menu-{{ complex.id }}">
+                            <li><button type="button" onclick="openEditModal({{ complex.id }})">Изменить</button></li>
+                            <li>
+                                <form action="{{ url_for('delete_existing_complex', complex_id=complex.id) }}" method="post" onsubmit="return confirm('Вы уверены, что хотите удалить этот комплекс?');">
+                                    <button type="submit">Удалить</button>
+                                </form>
+                            </li>
+                        </ul>
                         <h3>{{ complex.name }}</h3>
                         <ul>
                             {% for supplement in complex.supplements %}
                                 <li>{{ supplement.name }} - {{ supplement.dosage }}</li>
                             {% endfor %}
                         </ul>
+                        {% if complex.reminder_enabled and complex.reminder_time %}
+                            <p><strong>Напоминание:</strong> Ежедневно в {{ complex.reminder_time }}</p>
+                        {% endif %}
                     </div>
                 {% endfor %}
             {% else %}
@@ -44,38 +69,130 @@
             {% endif %}
         </div>
 
-        <form method="post" action="{{ url_for('add_new_complex') }}">
-            <h2>Добавить новый комплекс</h2>
-            <input type="text" name="complex_name" placeholder="Название комплекса (например, Утренний прием)" required>
-            
-            <div id="supplements-container">
-                <div class="supplement-field">
-                    <input type="text" name="supplement_name" placeholder="Название препарата" required>
-                    <input type="text" name="supplement_dosage" placeholder="Дозировка" required>
+        <div class="form-section">
+            <form id="add-form" method="post" action="{{ url_for('add_new_complex') }}">
+                <h2>Добавить новый комплекс</h2>
+                <input type="text" name="complex_name" placeholder="Название комплекса" required>
+                <div id="add-supplements-container">
+                    <div class="supplement-field">
+                        <input type="text" name="supplement_name" placeholder="Название препарата" required>
+                        <input type="text" name="supplement_dosage" placeholder="Дозировка" required>
+                    </div>
                 </div>
-            </div>
+                <button type="button" class="add-supplement-btn" data-container="add-supplements-container">+ Добавить препарат</button>
+                
+                <hr>
+                <div class="reminder-group">
+                    <input type="checkbox" id="add-reminder-enabled" name="reminder_enabled">
+                    <label for="add-reminder-enabled">Включить напоминание</label>
+                    <input type="time" id="add-reminder-time" name="reminder_time">
+                </div>
+                <hr>
 
-            <button type="button" id="add-supplement-btn">+ Добавить препарат</button>
-            <button type="submit">Сохранить комплекс</button>
-        </form>
+                <button type="submit">Сохранить комплекс</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модальное окно для редактирования -->
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeEditModal()">&times;</span>
+            <form id="edit-form" method="post">
+                <h2>Редактировать комплекс</h2>
+                <input type="text" name="complex_name" placeholder="Название комплекса" required>
+                <div id="edit-supplements-container"></div>
+                <button type="button" class="add-supplement-btn" data-container="edit-supplements-container">+ Добавить препарат</button>
+                
+                <hr>
+                <div class="reminder-group">
+                    <input type="checkbox" id="edit-reminder-enabled" name="reminder_enabled">
+                    <label for="edit-reminder-enabled">Включить напоминание</label>
+                    <input type="time" id="edit-reminder-time" name="reminder_time">
+                </div>
+                <hr>
+                
+                <button type="submit">Сохранить изменения</button>
+            </form>
+        </div>
     </div>
 
     <script>
-        document.getElementById('add-supplement-btn').addEventListener('click', function() {
-            const container = document.getElementById('supplements-container');
+        function addSupplementField(container, name = '', dosage = '') {
             const newField = document.createElement('div');
             newField.className = 'supplement-field';
             newField.innerHTML = `
-                <input type="text" name="supplement_name" placeholder="Название препарата" required>
-                <input type="text" name="supplement_dosage" placeholder="Дозировка" required>
+                <input type="text" name="supplement_name" placeholder="Название препарата" value="${name}" required>
+                <input type="text" name="supplement_dosage" placeholder="Дозировка" value="${dosage}" required>
                 <button type="button" class="remove-btn">-</button>
             `;
             container.appendChild(newField);
+        }
+        
+        document.querySelectorAll('.add-supplement-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const container = document.getElementById(btn.dataset.container);
+                addSupplementField(container);
+            });
         });
 
-        document.getElementById('supplements-container').addEventListener('click', function(e) {
+        function toggleMenu(event, complexId) {
+            event.stopPropagation();
+            document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                if (menu.id !== `menu-${complexId}`) menu.style.display = 'none';
+            });
+            const menu = document.getElementById(`menu-${complexId}`);
+            menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+        }
+
+        window.onclick = () => document.querySelectorAll('.dropdown-menu').forEach(menu => menu.style.display = 'none');
+        
+        const modal = document.getElementById('editModal');
+        const editForm = document.getElementById('edit-form');
+        const editSupplementsContainer = document.getElementById('edit-supplements-container');
+        const editReminderCheckbox = document.getElementById('edit-reminder-enabled');
+        const editReminderTimeInput = document.getElementById('edit-reminder-time');
+
+        function openEditModal(complexId) {
+            const card = document.getElementById(`complex-${complexId}`);
+            editForm.action = `/edit_complex/${complexId}`;
+            editForm.querySelector('input[name="complex_name"]').value = card.dataset.complexName;
+            
+            editSupplementsContainer.innerHTML = '';
+            JSON.parse(card.dataset.supplements).forEach(sup => addSupplementField(editSupplementsContainer, sup.name, sup.dosage));
+            
+            const reminderEnabled = card.dataset.reminderEnabled === 'true';
+            editReminderCheckbox.checked = reminderEnabled;
+            editReminderTimeInput.value = card.dataset.reminderTime;
+            editReminderTimeInput.style.display = reminderEnabled ? 'block' : 'none';
+            editReminderTimeInput.required = reminderEnabled;
+            
+            modal.style.display = 'block';
+        }
+
+        function closeEditModal() {
+            modal.style.display = 'none';
+        }
+
+        function setupReminderToggle(checkboxId, timeInputId) {
+            const checkbox = document.getElementById(checkboxId);
+            const timeInput = document.getElementById(timeInputId);
+            checkbox.addEventListener('change', () => {
+                const isEnabled = checkbox.checked;
+                timeInput.style.display = isEnabled ? 'block' : 'none';
+                timeInput.required = isEnabled;
+            });
+        }
+
+        setupReminderToggle('add-reminder-enabled', 'add-reminder-time');
+        setupReminderToggle('edit-reminder-enabled', 'edit-reminder-time');
+        
+        document.querySelector('.container').addEventListener('click', function(e) {
             if (e.target.classList.contains('remove-btn')) {
-                e.target.parentElement.remove();
+                const container = e.target.parentElement.parentElement;
+                if (container.childElementCount > 1) {
+                    e.target.parentElement.remove();
+                }
             }
         });
     </script>
