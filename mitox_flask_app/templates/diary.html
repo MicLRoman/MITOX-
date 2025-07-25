@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дневник приема БАД</title>
+    <style>
+        /* Простые стили для наглядности */
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #1c1e21; }
+        .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        .complex-card { background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
+        .complex-card h3 { margin-top: 0; }
+        form { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
+        input[type="text"], button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
+        .supplement-field { display: flex; gap: 10px; align-items: center; margin-bottom: 5px; }
+        .supplement-field input { flex-grow: 1; }
+        .remove-btn { background-color: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Дневник приема БАД</h1>
+        <!-- Используем данные из сессии для приветствия -->
+        <h2>Здравствуйте, {{ user_session.first_name or 'Пользователь' }}!</h2>
+        
+        <div id="complex-list">
+            <h2>Ваши комплексы</h2>
+            {% if complexes %}
+                {% for complex in complexes %}
+                    <div class="complex-card">
+                        <h3>{{ complex.name }}</h3>
+                        <ul>
+                            {% for supplement in complex.supplements %}
+                                <li>{{ supplement.name }} - {{ supplement.dosage }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>У вас пока нет сохраненных комплексов.</p>
+            {% endif %}
+        </div>
+
+        <form method="post" action="{{ url_for('add_new_complex') }}">
+            <h2>Добавить новый комплекс</h2>
+            <input type="text" name="complex_name" placeholder="Название комплекса (например, Утренний прием)" required>
+            
+            <div id="supplements-container">
+                <div class="supplement-field">
+                    <input type="text" name="supplement_name" placeholder="Название препарата" required>
+                    <input type="text" name="supplement_dosage" placeholder="Дозировка" required>
+                </div>
+            </div>
+
+            <button type="button" id="add-supplement-btn">+ Добавить препарат</button>
+            <button type="submit">Сохранить комплекс</button>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('add-supplement-btn').addEventListener('click', function() {
+            const container = document.getElementById('supplements-container');
+            const newField = document.createElement('div');
+            newField.className = 'supplement-field';
+            newField.innerHTML = `
+                <input type="text" name="supplement_name" placeholder="Название препарата" required>
+                <input type="text" name="supplement_dosage" placeholder="Дозировка" required>
+                <button type="button" class="remove-btn">-</button>
+            `;
+            container.appendChild(newField);
+        });
+
+        document.getElementById('supplements-container').addEventListener('click', function(e) {
+            if (e.target.classList.contains('remove-btn')) {
+                e.target.parentElement.remove();
+            }
+        });
+    </script>
+</body>
+</html>
